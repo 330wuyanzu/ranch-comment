@@ -1,24 +1,22 @@
-
-
 -module(ranch_app).
 -behaviour(application).
-
+%% Callback
 -export([start/2]).
 -export([stop/1]).
--export([profile_output/0]).
+%-export([profile_output/0]).
 
 start(_, _) 
-	->	_ = consider_profiling(),
-		ranch_sup:start_link().
+	->%	_ = consider_profiling(),
+		ranch_sup:create_supervisor().
 
 stop(_) -> ok.
 % 根据.app的配置参数来决定是否对应用进行性能分析
-consider_profiling() 
-	->	case application:get_env(profile) of
-			{ok, true} -> {ok, _Pid} = eprof:start(),
-						  eprof:start_profiling([self()]);
-			_ -> not_profiling
-		end.
+%consider_profiling() 
+%	->	case application:get_env(profile) of
+%			{ok, true} -> {ok, _Pid} = eprof:start(),
+%						  eprof:start_profiling([self()]);
+%			_ -> not_profiling
+%		end.
 		% application:get_env/1
 % application:get_env(Para) -> undefined | {ok, Value}
 % 获取应用的配置参数Para的值
@@ -37,9 +35,9 @@ consider_profiling()
 
 %% -spec profile_output() -> ok.
 %% eprof是一个Erlang的时间分析工具
-profile_output() 
-->	eprof:stop_profiling(),
-	eprof:log("procs.profile"),
-	eprof:analyze(procs),
-	eprof:log("total.profile"),
-	eprof:analyze(total).
+%profile_output() 
+%->	eprof:stop_profiling(),
+%	eprof:log("procs.profile"),
+%	eprof:analyze(procs),
+%	eprof:log("total.profile"),
+%	eprof:analyze(total).

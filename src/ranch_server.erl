@@ -16,7 +16,7 @@
 -behaviour(gen_server).
 
 %% API.
--export([start_link/0]).
+-export([start_server/0]).
 -export([set_new_listener_opts/3]).
 -export([cleanup_listener_opts/1]).
 -export([set_connections_sup/2]).
@@ -46,16 +46,54 @@
 
 %% API.
 
-%% -spec start_link() -> {ok, pid()}.
-start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_server()
+	->	Server_Name = {local, ranch_server},
+		Callback_Module = ranch_server,
+		Init_Arg = [],
+		Init_Option = [],
+		{ok, Server_PID} = gen_server:start_link(Server_Name, Callback_Module, Init_Arg, Init_Option),
+		{ok, Server_PID}.
 %% -spec set_new_listener_opts(ranch:ref(), ranch:max_conns(), any()) -> ok.
-set_new_listener_opts(Ref, MaxConns, Opts) 
-	-> gen_server:call(?MODULE, {set_new_listener_opts, Ref, MaxConns, Opts}).
+set_new_listener_opts(Ref, MaxConns, Opts) ->
+	Server_Ref = ranch_server,
+	Args = {Ref, MaxConns, Opts},
+	Request = [set_new_listener_opts, Args],
+	Reply = gen_server:call(Server_Ref, Request),
+	Reply.
+%% -spec set_connections_sup(ranch:ref(), pid()) -> ok.
+set_connections_sup(Ref, Pid) ->
+	Server_Ref = ranch_server,
+	Args = {Ref, Pid},
+	Request = [set_connections_sup, Args],
+	true = gen_server:call(Server_Ref, Request),
+	ok.
+%% -spec set_addr(ranch:ref(), {inet:ip_address(), inet:port_number()}) -> ok.
+set_addr(Ref, Addr) ->
+	Server_Ref = ranch_server,
+	Args = {Ref, Addr},
+	Request = [set_addr, Args],
+	Reply = gen_server:call(Server_Ref, Request),
+	Reply.
+%% -spec set_max_connections(ranch:ref(), ranch:max_conns()) -> ok.
+set_max_connections(Ref, MaxConnections) ->
+	Server_Ref = ranch_server,
+	Args = {Ref, MaxConnections},
+	Request = [set_max_conns, Args],
+	Reply = gen_server:call(Server_Ref, Request),
+	Reply.
+%% -spec set_protocol_options(ranch:ref(), any()) -> ok.
+set_protocol_options(Ref, ProtoOpts) ->
+	Server_Ref = ranch_server,
+	Args = {Ref, ProtoOpts},
+	Request = [set_opts, Args],
+	Reply = gen_server:call(Server_Ref, Request),
+	Reply.
 %% -spec cleanup_listener_opts(ranch:ref()) -> ok.
 cleanup_listener_opts(Ref) ->
-	_ = ets:delete(?TAB, {addr, Ref}),
-	_ = ets:delete(?TAB, {max_conns, Ref}),
-	_ = ets:delete(?TAB, {opts, Ref}),
+	Table_Name = ranch_server,
+	_ = ets:delete(Table_Name, {addr, Ref}),
+	_ = ets:delete(Table_Name, {max_conns, Ref}),
+	_ = ets:delete(Table_Name, {opts, Ref}),
 	%% We also remove the pid of the connections supervisor.
 	%% Depending on the timing, it might already have been deleted
 	%% when we handled the monitor DOWN message. However, in some
@@ -63,79 +101,97 @@ cleanup_listener_opts(Ref) ->
 	%% we could end up with the pid still being returned, when we
 	%% expected a crash (because the listener was stopped).
 	%% Deleting it explictly here removes any possible confusion.
-	_ = ets:delete(?TAB, {conns_sup, Ref}),
+	_ = ets:delete(Table_Name, {conns_sup, Ref}),
 	ok.
-%% -spec set_connections_sup(ranch:ref(), pid()) -> ok.
-set_connections_sup(Ref, Pid) 
-	-> 	true = gen_server:call(?MODULE, {set_connections_sup, Ref, Pid}),
-		ok.
+
 %% -spec get_connections_sup(ranch:ref()) -> pid().
-get_connections_sup(Ref)  -> ets:lookup_element(?TAB, {conns_sup, Ref}, 2).
-%% -spec set_addr(ranch:ref(), {inet:ip_address(), inet:port_number()}) -> ok.
-set_addr(Ref, Addr) -> gen_server:call(?MODULE, {set_addr, Ref, Addr}).
+get_connections_sup(Ref) ->
+	Table_Name = ranch_server,
+	ets:lookup_element(Table_Name, {conns_sup, Ref}, 2).
+
 %% -spec get_addr(ranch:ref()) -> {inet:ip_address(), inet:port_number()}.
-get_addr(Ref) -> ets:lookup_element(?TAB, {addr, Ref}, 2).
-%% -spec set_max_connections(ranch:ref(), ranch:max_conns()) -> ok.
-set_max_connections(Ref, MaxConnections) -> gen_server:call(?MODULE, {set_max_conns, Ref, MaxConnections}).
+get_addr(Ref) ->
+	Table_Name = ranch_server,
+	ets:lookup_element(Table_Name, {addr, Ref}, 2).
+
 %% -spec get_max_connections(ranch:ref()) -> ranch:max_conns().
-get_max_connections(Ref) -> ets:lookup_element(?TAB, {max_conns, Ref}, 2).
-%% -spec set_protocol_options(ranch:ref(), any()) -> ok.
-set_protocol_options(Ref, ProtoOpts) -> gen_server:call(?MODULE, {set_opts, Ref, ProtoOpts}).
+get_max_connections(Ref) ->
+	Table_Name = ranch_server,
+	ets:lookup_element(Table_Name, {max_conns, Ref}, 2).
+
 %% -spec get_protocol_options(ranch:ref()) -> any().
-get_protocol_options(Ref) -> ets:lookup_element(?TAB, {opts, Ref}, 2).
+get_protocol_options(Ref) ->
+	Table_Name = ranch_server,
+	ets:lookup_element(Table_Name, {opts, Ref}, 2).
 %% -spec count_connections(ranch:ref()) -> non_neg_integer().
-count_connections(Ref) -> ranch_conns_sup:active_connections(get_connections_sup(Ref)).
+count_connections(Ref) ->
+	ranch_conns_sup:active_connections(get_connections_sup(Ref)).
 
 %% gen_server.
 
+
 %% ranch_sup启动时会调用这个函数来初始化ranch_server进程
-init([]) 
-	->	Monitors = [                                                  % ?TAB = ranch_server
-			{{new_monitor(Pid), Pid}, Ref} || [Ref, Pid] <- ets:match(?TAB, {{conns_sup, '$1'}, '$2'})
-		],
+init(_Arg = []) ->
+	Result_List = '_select'(),
+	Monitors = ['_new_monitor'(Pid, Ref) || [Ref, Pid] <- Result_List],
 		{ok, #state{monitors=Monitors}}.
+'_select'() ->
+	Table_Name = ranch_server,
+	Ref_placeholder = '$1',
+	Pid_placeholder = '$2',
+	Match_Patern = {{conns_sup, Ref_placeholder}, Pid_placeholder},
+	Result_List = ets:match(Table_Name, Match_Patern),
+	Result_List.
 % erlang:monitor(Type, Monitored_ID)在当前进程和被监控进程之间创建一个监控器，当被监控的进程关掉时，监控器就会关掉，并且当前进程才会得到消息
 % 第一个参数表示被监控的类型 process | port | time_offset
 % 第二个参数表示被监控实体的ID，可以是pid()，也可以是注册名
 % 返回监控器的引用
-new_monitor(Monitored_Pid) 
-	-> 	MonitorRef = erlang:monitor(process, Monitored_Pid),
-		MonitorRef.
+'_new_monitor'(Monitored_Pid, Ref) ->
+	MonitorRef = erlang:monitor(process, Monitored_Pid),
+	{{MonitorRef, Monitored_Pid}, Ref}.
+
 %% 
-handle_call({set_new_listener_opts, Ref, MaxConns, Opts}, _, State)
-	->	ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
-		ets:insert(?TAB, {{opts, Ref}, Opts}),
-		{reply, ok, State};
+handle_call([set_new_listener_opts|Args], _From, State) ->
+	[{Ref, MaxConns, Opts}] = Args,
+	ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
+	ets:insert(?TAB, {{opts, Ref}, Opts}),
+	{reply, ok, State};
 %%
-handle_call({set_connections_sup, Ref, Pid}, _, State=#state{monitors=Monitors}) 
-	->	case ets:insert_new(?TAB, {{conns_sup, Ref}, Pid}) of
-			true ->
-				MonitorRef = new_monitor(Pid),
-				{reply, true, State#state{monitors=[{{MonitorRef, Pid}, Ref}|Monitors]}};
-			false -> {reply, false, State}
-		end;
-handle_call({set_addr, Ref, Addr}, _, State) 
-	->	true = ets:insert(?TAB, {{addr, Ref}, Addr}),
-		{reply, ok, State};
-handle_call({set_max_conns, Ref, MaxConns}, _, State) 
-	->	ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
-		ConnsSup = get_connections_sup(Ref),
-		ConnsSup ! {set_max_conns, MaxConns},
-		{reply, ok, State};
-handle_call({set_opts, Ref, Opts}, _, State) 
-	->	ets:insert(?TAB, {{opts, Ref}, Opts}),
-		ConnsSup = get_connections_sup(Ref),
-		ConnsSup ! {set_opts, Opts},
-		{reply, ok, State};
-handle_call(_Request, _From, State) -> {reply, ignore, State}.
+handle_call([set_connections_sup|Args], _From, State=#state{monitors=Monitors}) ->
+	[{Ref, Pid}] = Args,
+	case ets:insert_new(?TAB, {{conns_sup, Ref}, Pid}) of
+		true ->
+			MonitorRef = erlang:monitor(process, Pid),
+			{reply, true, State#state{monitors=[{{MonitorRef, Pid}, Ref}|Monitors]}};
+		false -> {reply, false, State}
+	end;
+handle_call([set_addr|Args], _From, State) ->
+	[{Ref, Addr}] = Args,
+	true = ets:insert(?TAB, {{addr, Ref}, Addr}),
+	{reply, ok, State};
+handle_call([set_max_conns|Args], _From, State) ->
+	[{Ref, MaxConns}] = Args,	
+	ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
+	ConnsSup = get_connections_sup(Ref),
+	ConnsSup ! {set_max_conns, MaxConns},
+	{reply, ok, State};
+handle_call([set_opts|Args], _From, State) ->
+	[{Ref, Opts}] = Args,
+	ets:insert(?TAB, {{opts, Ref}, Opts}),
+	ConnsSup = get_connections_sup(Ref),
+	ConnsSup ! {set_opts, Opts},
+	{reply, ok, State};
+handle_call(_Request, _From, State) ->
+	{reply, ignore, State}.
 %% 
-handle_cast(_Request, State) -> {noreply, State}.
+handle_cast(_Request, State) ->
+	{noreply, State}.
 %%
-handle_info({'DOWN', MonitorRef, process, Pid, _}, State=#state{monitors=Monitors}) 
-	->	{_, Ref} = lists:keyfind({MonitorRef, Pid}, 1, Monitors),
-		_ = ets:delete(?TAB, {conns_sup, Ref}),
-		Monitors2 = lists:keydelete({MonitorRef, Pid}, 1, Monitors),
-		{noreply, State#state{monitors=Monitors2}};
+handle_info({'DOWN', MonitorRef, process, Pid, _}, State=#state{monitors=Monitors}) ->
+	{_, Ref} = lists:keyfind({MonitorRef, Pid}, 1, Monitors),
+	_ = ets:delete(?TAB, {conns_sup, Ref}),
+	Monitors2 = lists:keydelete({MonitorRef, Pid}, 1, Monitors),
+	{noreply, State#state{monitors=Monitors2}};
 handle_info(_Info, State) -> {noreply, State}.
 %% 
 terminate(_Reason, _State) -> ok.
