@@ -60,6 +60,11 @@ set_new_listener_opts(Ref, MaxConns, Opts) ->
 	Request = [set_new_listener_opts, Args],
 	Reply = gen_server:call(Server_Ref, Request),
 	Reply.
+'_on_set_new_listener_opts'(Args, State) ->
+		[{Ref, MaxConns, Opts}] = Args,
+		ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
+		ets:insert(?TAB, {{opts, Ref}, Opts}),
+		{reply, ok, State}.
 %% -spec set_connections_sup(ranch:ref(), pid()) -> ok.
 set_connections_sup(Ref, Pid) ->
 	Server_Ref = ranch_server,
@@ -67,13 +72,15 @@ set_connections_sup(Ref, Pid) ->
 	Request = [set_connections_sup, Args],
 	true = gen_server:call(Server_Ref, Request),
 	ok.
-%% -spec set_addr(ranch:ref(), {inet:ip_address(), inet:port_number()}) -> ok.
-set_addr(Ref, Addr) ->
-	Server_Ref = ranch_server,
-	Args = {Ref, Addr},
-	Request = [set_addr, Args],
-	Reply = gen_server:call(Server_Ref, Request),
-	Reply.
+'_on_set_connections_sup'(Args, State=#state{monitors=Monitors}) ->
+		[{Ref, Pid}] = Args,
+		case ets:insert_new(?TAB, {{conns_sup, Ref}, Pid}) of
+			true ->
+				MonitorRef = erlang:monitor(process, Pid),
+				{reply, true, State#state{monitors=[{{MonitorRef, Pid}, Ref}|Monitors]}};
+			false -> {reply, false, State}
+		end.
+
 %% -spec set_max_connections(ranch:ref(), ranch:max_conns()) -> ok.
 set_max_connections(Ref, MaxConnections) ->
 	Server_Ref = ranch_server,
@@ -81,6 +88,12 @@ set_max_connections(Ref, MaxConnections) ->
 	Request = [set_max_conns, Args],
 	Reply = gen_server:call(Server_Ref, Request),
 	Reply.
+'_on_set_max_conns'(Args, State) ->
+		[{Ref, MaxConns}] = Args,
+		ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
+		ConnsSup = get_connections_sup(Ref),
+		ConnsSup ! {set_max_conns, MaxConns},
+		{reply, ok, State}.
 %% -spec set_protocol_options(ranch:ref(), any()) -> ok.
 set_protocol_options(Ref, ProtoOpts) ->
 	Server_Ref = ranch_server,
@@ -88,6 +101,12 @@ set_protocol_options(Ref, ProtoOpts) ->
 	Request = [set_opts, Args],
 	Reply = gen_server:call(Server_Ref, Request),
 	Reply.
+'_on_set_opts'(Args, State) ->
+		[{Ref, Opts}] = Args,
+		ets:insert(?TAB, {{opts, Ref}, Opts}),
+		ConnsSup = get_connections_sup(Ref),
+		ConnsSup ! {set_opts, Opts},
+		{reply, ok, State}.
 %% -spec cleanup_listener_opts(ranch:ref()) -> ok.
 cleanup_listener_opts(Ref) ->
 	Table_Name = ranch_server,
@@ -103,7 +122,17 @@ cleanup_listener_opts(Ref) ->
 	%% Deleting it explictly here removes any possible confusion.
 	_ = ets:delete(Table_Name, {conns_sup, Ref}),
 	ok.
-
+%% -spec set_addr(ranch:ref(), {inet:ip_address(), inet:port_number()}) -> ok.
+set_addr(Ref, Addr) ->
+	Server_Ref = ranch_server,
+	Args = {Ref, Addr},
+	Request = [set_addr, Args],
+	Reply = gen_server:call(Server_Ref, Request),
+	Reply.
+'_on_set_addr'(Args, State) ->
+	[{Ref, Addr}] = Args,
+	true = ets:insert(?TAB, {{addr, Ref}, Addr}),
+	{reply, ok, State}.
 %% -spec get_connections_sup(ranch:ref()) -> pid().
 get_connections_sup(Ref) ->
 	Table_Name = ranch_server,
@@ -127,14 +156,14 @@ get_protocol_options(Ref) ->
 count_connections(Ref) ->
 	ranch_conns_sup:active_connections(get_connections_sup(Ref)).
 
+
+
 %% gen_server.
-
-
 %% ranch_sup启动时会调用这个函数来初始化ranch_server进程
 init(_Arg = []) ->
 	Result_List = '_select'(),
 	Monitors = ['_new_monitor'(Pid, Ref) || [Ref, Pid] <- Result_List],
-		{ok, #state{monitors=Monitors}}.
+	{ok, #state{monitors=Monitors}}.
 '_select'() ->
 	Table_Name = ranch_server,
 	Ref_placeholder = '$1',
@@ -150,42 +179,18 @@ init(_Arg = []) ->
 	MonitorRef = erlang:monitor(process, Monitored_Pid),
 	{{MonitorRef, Monitored_Pid}, Ref}.
 
+handle_call(Request, _From, State) ->
+	[Func|Args] = Request,
+	case Func of
+		set_new_listener_opts -> '_on_set_new_listener_opts'(Args, State);
+		set_connections_sup ->'_on_set_connections_sup'(Args, State);
+		set_max_conns -> '_on_set_max_conns'(Args, State);
+		set_addr -> '_on_set_addr'(Args, State);
+		set_opts -> '_on_set_opts'(Args, State);
+		_ -> {reply, ignore, State}
+	end.
 %% 
-handle_call([set_new_listener_opts|Args], _From, State) ->
-	[{Ref, MaxConns, Opts}] = Args,
-	ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
-	ets:insert(?TAB, {{opts, Ref}, Opts}),
-	{reply, ok, State};
-%%
-handle_call([set_connections_sup|Args], _From, State=#state{monitors=Monitors}) ->
-	[{Ref, Pid}] = Args,
-	case ets:insert_new(?TAB, {{conns_sup, Ref}, Pid}) of
-		true ->
-			MonitorRef = erlang:monitor(process, Pid),
-			{reply, true, State#state{monitors=[{{MonitorRef, Pid}, Ref}|Monitors]}};
-		false -> {reply, false, State}
-	end;
-handle_call([set_addr|Args], _From, State) ->
-	[{Ref, Addr}] = Args,
-	true = ets:insert(?TAB, {{addr, Ref}, Addr}),
-	{reply, ok, State};
-handle_call([set_max_conns|Args], _From, State) ->
-	[{Ref, MaxConns}] = Args,	
-	ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
-	ConnsSup = get_connections_sup(Ref),
-	ConnsSup ! {set_max_conns, MaxConns},
-	{reply, ok, State};
-handle_call([set_opts|Args], _From, State) ->
-	[{Ref, Opts}] = Args,
-	ets:insert(?TAB, {{opts, Ref}, Opts}),
-	ConnsSup = get_connections_sup(Ref),
-	ConnsSup ! {set_opts, Opts},
-	{reply, ok, State};
-handle_call(_Request, _From, State) ->
-	{reply, ignore, State}.
-%% 
-handle_cast(_Request, State) ->
-	{noreply, State}.
+handle_cast(_Request, State) -> {noreply, State}.
 %%
 handle_info({'DOWN', MonitorRef, process, Pid, _}, State=#state{monitors=Monitors}) ->
 	{_, Ref} = lists:keyfind({MonitorRef, Pid}, 1, Monitors),
