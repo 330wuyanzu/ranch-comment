@@ -13,6 +13,7 @@
 % 创建一个监督者，作为监督树的一部分，例如这个函数确保监督者被链接到调用进程(即这个监督者的监督者)
 % 被创建的监督者进程会调用Module:init/1来弄清楚重启策略，最大重启次数和子进程
 % 为了保证同步启动程序，这个函数在所有子进程都启动并且Module:init/1返回后才会返回
+% API
 create_supervisor() 
 	-> 	Type = local,
 		Name = ranch_sup,
@@ -20,17 +21,19 @@ create_supervisor()
 		Callback_Module = ranch_sup,
 		Init_Arg = [],
 		supervisor:start_link(SupName, Callback_Module, Init_Arg).
-
+% Callback
 init(_Args=[]) ->
+	% 创建ETS表
 	% ets:new(Table_Name, [Option]) -> Table_Name
 	% Table_Name = atom()
 	Table_Name = ranch_server,
 	Option_List = [ordered_set, public, named_table],
 	Table_Name = ets:new(Table_Name, Option_List),
+	% 
 	Supervisor_Flags = #{
-		strategy => one_for_one,
-		intensity => 1,
-		period => 5
+		strategy => one_for_one, % 只重启挂掉的那个子进程
+		intensity => 1, % 周期内最多重启1次
+		period => 5 % 周期5秒
 	},
 	Child_Spec_1 = #{
 		id => ranch_server,

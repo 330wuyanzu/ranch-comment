@@ -54,65 +54,65 @@ start_server()
 		{ok, Server_PID} = gen_server:start_link(Server_Name, Callback_Module, Init_Arg, Init_Option),
 		{ok, Server_PID}.
 %% -spec set_new_listener_opts(ranch:ref(), ranch:max_conns(), any()) -> ok.
-set_new_listener_opts(Ref, MaxConns, Opts) ->
-	Server_Ref = ranch_server,
-	Args = {Ref, MaxConns, Opts},
+set_new_listener_opts(ListenerRef, MaxConns, Opts) ->
+	ServerRef = ranch_server,
+	Args = {ListenerRef, MaxConns, Opts},
 	Request = [set_new_listener_opts, Args],
-	Reply = gen_server:call(Server_Ref, Request),
+	Reply = gen_server:call(ServerRef, Request),
 	Reply.
 '_on_set_new_listener_opts'(Args, State) ->
-		[{Ref, MaxConns, Opts}] = Args,
-		ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
-		ets:insert(?TAB, {{opts, Ref}, Opts}),
+		[{ListenerRef, MaxConns, Opts}] = Args,
+		ets:insert(?TAB, {{max_conns, ListenerRef}, MaxConns}),
+		ets:insert(?TAB, {{opts, ListenerRef}, Opts}),
 		{reply, ok, State}.
 %% -spec set_connections_sup(ranch:ref(), pid()) -> ok.
-set_connections_sup(Ref, Pid) ->
+set_connections_sup(ConSupRef, Pid) ->
 	Server_Ref = ranch_server,
-	Args = {Ref, Pid},
+	Args = {ConSupRef, Pid},
 	Request = [set_connections_sup, Args],
 	true = gen_server:call(Server_Ref, Request),
 	ok.
 '_on_set_connections_sup'(Args, State=#state{monitors=Monitors}) ->
-		[{Ref, Pid}] = Args,
-		case ets:insert_new(?TAB, {{conns_sup, Ref}, Pid}) of
+		[{ConSupRef, Pid}] = Args,
+		case ets:insert_new(?TAB, {{conns_sup, ConSupRef}, Pid}) of
 			true ->
 				MonitorRef = erlang:monitor(process, Pid),
-				{reply, true, State#state{monitors=[{{MonitorRef, Pid}, Ref}|Monitors]}};
+				{reply, true, State#state{monitors=[{{MonitorRef, Pid}, ConSupRef}|Monitors]}};
 			false -> {reply, false, State}
 		end.
 
 %% -spec set_max_connections(ranch:ref(), ranch:max_conns()) -> ok.
-set_max_connections(Ref, MaxConnections) ->
+set_max_connections(ConSupRef, MaxConnections) ->
 	Server_Ref = ranch_server,
-	Args = {Ref, MaxConnections},
+	Args = {ConSupRef, MaxConnections},
 	Request = [set_max_conns, Args],
 	Reply = gen_server:call(Server_Ref, Request),
 	Reply.
 '_on_set_max_conns'(Args, State) ->
-		[{Ref, MaxConns}] = Args,
-		ets:insert(?TAB, {{max_conns, Ref}, MaxConns}),
-		ConnsSup = get_connections_sup(Ref),
+		[{ConSupRef, MaxConns}] = Args,
+		ets:insert(?TAB, {{max_conns, ConSupRef}, MaxConns}),
+		ConnsSup = get_connections_sup(ConSupRef),
 		ConnsSup ! {set_max_conns, MaxConns},
 		{reply, ok, State}.
 %% -spec set_protocol_options(ranch:ref(), any()) -> ok.
-set_protocol_options(Ref, ProtoOpts) ->
+set_protocol_options(ConSupRef, ProtoOpts) ->
 	Server_Ref = ranch_server,
-	Args = {Ref, ProtoOpts},
+	Args = {ConSupRef, ProtoOpts},
 	Request = [set_opts, Args],
 	Reply = gen_server:call(Server_Ref, Request),
 	Reply.
 '_on_set_opts'(Args, State) ->
-		[{Ref, Opts}] = Args,
-		ets:insert(?TAB, {{opts, Ref}, Opts}),
-		ConnsSup = get_connections_sup(Ref),
+		[{ConSupRef, Opts}] = Args,
+		ets:insert(?TAB, {{opts, ConSupRef}, Opts}),
+		ConnsSup = get_connections_sup(ConSupRef),
 		ConnsSup ! {set_opts, Opts},
 		{reply, ok, State}.
 %% -spec cleanup_listener_opts(ranch:ref()) -> ok.
-cleanup_listener_opts(Ref) ->
+cleanup_listener_opts(ConSupRef) ->
 	Table_Name = ranch_server,
-	_ = ets:delete(Table_Name, {addr, Ref}),
-	_ = ets:delete(Table_Name, {max_conns, Ref}),
-	_ = ets:delete(Table_Name, {opts, Ref}),
+	_ = ets:delete(Table_Name, {addr, ConSupRef}),
+	_ = ets:delete(Table_Name, {max_conns, ConSupRef}),
+	_ = ets:delete(Table_Name, {opts, ConSupRef}),
 	%% We also remove the pid of the connections supervisor.
 	%% Depending on the timing, it might already have been deleted
 	%% when we handled the monitor DOWN message. However, in some
@@ -120,7 +120,7 @@ cleanup_listener_opts(Ref) ->
 	%% we could end up with the pid still being returned, when we
 	%% expected a crash (because the listener was stopped).
 	%% Deleting it explictly here removes any possible confusion.
-	_ = ets:delete(Table_Name, {conns_sup, Ref}),
+	_ = ets:delete(Table_Name, {conns_sup, ConSupRef}),
 	ok.
 %% -spec set_addr(ranch:ref(), {inet:ip_address(), inet:port_number()}) -> ok.
 set_addr(Ref, Addr) ->

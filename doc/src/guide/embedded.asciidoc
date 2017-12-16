@@ -1,7 +1,6 @@
 == Embedded mode
 
-Embedded mode allows you to insert Ranch listeners directly
-in your supervision tree. This allows for greater fault tolerance
+嵌入模式允许直接在你的监督树中插入Ranch的listener。This allows for greater fault tolerance
 control by permitting the shutdown of a listener due to the
 failure of another part of the application and vice versa.
 

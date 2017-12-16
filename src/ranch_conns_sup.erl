@@ -18,7 +18,7 @@
 -module(ranch_conns_sup).
 
 %% API.
--export([start_link/6]).
+-export([create_connection_supervisor/6]).
 -export([start_protocol/2]).
 -export([active_connections/1]).
 
@@ -45,11 +45,12 @@
 
 %% API.
 
--spec start_link(ranch:ref(), conn_type(), shutdown(), module(),
-	timeout(), module()) -> {ok, pid()}.
-start_link(Ref, ConnType, Shutdown, Transport, AckTimeout, Protocol) ->
-	proc_lib:start_link(?MODULE, init,
-		[self(), Ref, ConnType, Shutdown, Transport, AckTimeout, Protocol]).
+%-spec start_link(ranch:ref(), conn_type(), shutdown(), module(),timeout(), module()) -> {ok, pid()}.
+create_connection_supervisor(ListenerName, ConnType, Shutdown, TransportModule, AckTimeout, ProtocolModule) ->
+	Module = ?MODULE,
+	Func = init,
+	Arg = [self(), ListenerName, ConnType, Shutdown, TransportModule, AckTimeout, ProtocolModule],
+	proc_lib:start_link(Module, Func, Arg).
 
 %% We can safely assume we are on the same node as the supervisor.
 %%
@@ -94,8 +95,7 @@ active_connections(SupPid) ->
 
 %% Supervisor internals.
 
--spec init(pid(), ranch:ref(), conn_type(), shutdown(),
-	module(), timeout(), module()) -> no_return().
+-spec init(pid(), ranch:ref(), conn_type(), shutdown(), module(), timeout(), module()) -> no_return().
 init(Parent, Ref, ConnType, Shutdown, Transport, AckTimeout, Protocol) ->
 	process_flag(trap_exit, true),
 	ok = ranch_server:set_connections_sup(Ref, self()),
@@ -105,7 +105,7 @@ init(Parent, Ref, ConnType, Shutdown, Transport, AckTimeout, Protocol) ->
 	loop(#state{parent=Parent, ref=Ref, conn_type=ConnType,
 		shutdown=Shutdown, transport=Transport, protocol=Protocol,
 		opts=Opts, ack_timeout=AckTimeout, max_conns=MaxConns}, 0, 0, []).
-
+%%
 loop(State=#state{parent=Parent, ref=Ref, conn_type=ConnType,
 		transport=Transport, protocol=Protocol, opts=Opts,
 		max_conns=MaxConns}, CurConns, NbChildren, Sleepers) ->
@@ -215,7 +215,7 @@ loop(State=#state{parent=Parent, ref=Ref, conn_type=ConnType,
 				"Ranch listener ~p received unexpected message ~p~n",
 				[Ref, Msg])
 	end.
-
+%%
 shoot(State=#state{ref=Ref, transport=Transport, ack_timeout=AckTimeout, max_conns=MaxConns},
 		CurConns, NbChildren, Sleepers, To, Socket, SupPid, ProtocolPid) ->
 	case Transport:controlling_process(Socket, ProtocolPid) of
@@ -237,7 +237,7 @@ shoot(State=#state{ref=Ref, transport=Transport, ack_timeout=AckTimeout, max_con
 			To ! self(),
 			loop(State, CurConns, NbChildren, Sleepers)
 	end.
-
+%%
 -spec terminate(#state{}, any(), non_neg_integer()) -> no_return().
 terminate(#state{shutdown=brutal_kill}, Reason, _) ->
 	kill_children(get_keys(active)),
